@@ -14,7 +14,7 @@ app.secret_key = os.environ.get("FLASK_SECRET_KEY", "your_super_secret_key") # C
 # You need to get your MongoDB Atlas Connection String and replace the placeholder.
 # For local testing, you can use "mongodb://localhost:27017/"
 # On Vercel, set MONGODB_URI as an Environment Variable.
-MONGO_URI = os.environ.get("MONGODB_URI", "mongodb+srv://mewayo8672:mewayo8672@cluster0.ozhvczp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0") 
+MONGO_URI = os.environ.get("MONGODB_URI", "mongodb+srv://Demo270:Demo270@cluster0.ls1igsg.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0") 
 client = MongoClient(MONGO_URI)
 db = client.cinehub_db # Your database name (e.g., cinehub_db)
 movies_collection = db.movies # Your collection name (e.g., movies)
