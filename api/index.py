@@ -1,28 +1,39 @@
-# app.py (or index.py) - A highly simplified Flask web app for demonstration
+# app.py - A simplified Flask web app with MongoDB, TMDb integration, and basic Admin Login
 
-from flask import Flask, render_template_string, request, redirect, url_for
-import json # Used for dummy data storage for demonstration
+from flask import Flask, render_template_string, request, redirect, url_for, session, flash
+from pymongo import MongoClient
+from bson.objectid import ObjectId # For handling MongoDB's default _id
+import requests # For making HTTP requests to TMDb API
+import os # To get environment variables
+import json # For debugging/pretty printing API responses
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "your_super_secret_key") # Change this in production!
 
-# --- Dummy Database (In a real app, this would be MongoDB or another database) ---
-# For demonstration, we'll store movie data in a simple Python list
-# In a real app, you'd connect to MongoDB Atlas here.
-# Example: from pymongo import MongoClient
-#          client = MongoClient("YOUR_MONGODB_CONNECTION_STRING")
-#          db = client.cinehub_db
-#          movies_collection = db.movies
+# --- TODO 1: MongoDB Connection Configuration ---
+# You need to get your MongoDB Atlas Connection String and replace the placeholder.
+# For local testing, you can use "mongodb://localhost:27017/"
+# On Vercel, set MONGODB_URI as an Environment Variable.
+MONGO_URI = os.environ.get("MONGODB_URI", "mongodb+srv://mewayo8672:mewayo8672@cluster0.ozhvczp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0") 
+client = MongoClient(MONGO_URI)
+db = client.cinehub_db # Your database name (e.g., cinehub_db)
+movies_collection = db.movies # Your collection name (e.g., movies)
 
-movies_data = [
-    {"id": 1, "title": "The Last Sentinel", "year": 2023, "genre": "Sci-Fi", "poster": "https://via.placeholder.com/200x300/e94560/ffffff?text=Movie+1", "trailer_link": "#", "download_link": "#"},
-    {"id": 2, "title": "Neon Samurai", "year": 2022, "genre": "Action", "poster": "https://via.placeholder.com/200x300/0f3460/ffffff?text=Movie+2", "trailer_link": "#", "download_link": "#"},
-    {"id": 3, "title": "Cosmic Echoes", "year": 2023, "genre": "Adventure", "poster": "https://via.placeholder.com/200x300/16213e/ffffff?text=Movie+3", "trailer_link": "#", "download_link": "#"},
-    # Add more dummy movies here
-]
-next_movie_id = max([m['id'] for m in movies_data]) + 1 if movies_data else 1
+# --- TODO 2: TMDb API Configuration ---
+# Get your TMDb API Key (v3) and replace the placeholder.
+# On Vercel, set TMDB_API_KEY as an Environment Variable.
+TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "7dc544d9253bccc3cfecc1c677f69819") 
+TMDB_BASE_URL = "https://api.themoviedb.org/3"
+TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500" # Base URL for TMDb movie posters
 
-# --- HTML Templates (In a real app, these would be separate .html files in a 'templates' folder) ---
+# --- TODO 3: Admin Credentials (For basic login, change in production!) ---
+# In a real app, store hashed passwords in a database.
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password") # Hashed password recommended for production
+
+# --- HTML Templates (In a real app, these would be separate .html files) ---
 # For demonstration, everything is inlined as strings.
+# The CSS is included here to keep it in one file as requested.
 
 BASE_HTML = """
 <!DOCTYPE html>
@@ -77,7 +88,8 @@ BASE_HTML = """
         .admin-form { background-color: #16213e; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); margin-bottom: 30px;}
         .admin-form label { display: block; margin-bottom: 8px; font-weight: 600; color: #e94560; }
         .admin-form input[type="text"],
-        .admin-form textarea {
+        .admin-form textarea,
+        .admin-form input[type="password"] {
             width: 100%;
             padding: 10px;
             margin-bottom: 20px;
@@ -122,7 +134,20 @@ BASE_HTML = """
         }
         .admin-movie-item .actions button:hover { color: #c03952; }
 
-
+        /* Messages */
+        .flash-message {
+            background-color: #4CAF50; /* Green for success */
+            color: white;
+            padding: 15px;
+            text-align: center;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+        .flash-message.error {
+            background-color: #f44336; /* Red for error */
+        }
+        
         /* Footer */
         .footer { background-color: #16213e; color: #a0a0a0; padding: 30px 0; text-align: center; border-top: 1px solid #0f3460; margin-top: 50px; }
         .footer-links a { color: #a0a0a0; margin: 0 10px; transition: color 0.3s ease; }
@@ -163,7 +188,9 @@ BASE_HTML = """
                 <ul class="nav-menu">
                     <li class="nav-item"><a href="{{ url_for('home') }}">Home</a></li>
                     <li class="nav-item"><a href="{{ url_for('admin_dashboard') }}">Admin</a></li>
-                    <!-- Add more navigation items here -->
+                    {% if session.logged_in %}
+                    <li class="nav-item"><a href="{{ url_for('logout') }}">Logout</a></li>
+                    {% endif %}
                 </ul>
                 <div class="hamburger" id="hamburger-menu">
                     <span></span>
@@ -175,6 +202,15 @@ BASE_HTML = """
     </header>
 
     <main>
+        <div class="container">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="flash-message {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+        </div>
         {{ content }}
     </main>
 
@@ -239,6 +275,21 @@ HOME_CONTENT = """
         </section>
 """
 
+LOGIN_PAGE_CONTENT = """
+    <section class="admin-section container">
+        <h2 class="section-title">Admin Login</h2>
+        <div class="admin-form" style="max-width: 400px; margin: 0 auto;">
+            <form method="POST" action="{{ url_for('login') }}">
+                <label for="username">Username:</label>
+                <input type="text" id="username" name="username" required>
+                <label for="password">Password:</label>
+                <input type="password" id="password" name="password" required>
+                <button type="submit">Login</button>
+            </form>
+        </div>
+    </section>
+"""
+
 ADMIN_DASHBOARD_CONTENT = """
         <section class="admin-section container">
             <h2 class="section-title">Admin Dashboard</h2>
@@ -246,38 +297,77 @@ ADMIN_DASHBOARD_CONTENT = """
             <h3>Add New Movie</h3>
             <div class="admin-form">
                 <form method="POST" action="{{ url_for('add_movie') }}">
-                    <label for="title">Title:</label>
-                    <input type="text" id="title" name="title" required>
+                    <label for="title">Movie Title:</label>
+                    <input type="text" id="title" name="title" placeholder="Enter movie title to search or add manually" required>
 
-                    <label for="year">Year:</label>
-                    <input type="text" id="year" name="year" required>
-
-                    <label for="genre">Genre:</label>
-                    <input type="text" id="genre" name="genre">
-                    
-                    <label for="poster">Poster URL:</label>
-                    <input type="text" id="poster" name="poster" value="https://via.placeholder.com/200x300?text=New+Movie">
-
-                    <label for="trailer_link">Trailer Link (YouTube/Vimeo):</label>
-                    <input type="text" id="trailer_link" name="trailer_link">
-                    
-                    <label for="download_link">Download Link (Direct URL):</label>
-                    <input type="text" id="download_link" name="download_link">
-
-                    <button type="submit">Add Movie</button>
-                    <!-- TODO: Add a button to fetch data from TMDb based on title -->
-                    <!-- In a real app, this would involve a separate API call from the backend -->
+                    <button type="submit" name="action" value="search_add_tmdb">Search & Add from TMDb</button>
+                    <button type="submit" name="action" value="add_manual">Add Manually</button>
                 </form>
             </div>
+            
+            {% if movie_search_result %}
+            <div class="admin-form" style="margin-top: 20px;">
+                <h3>TMDb Search Result: {{ movie_search_result.title }}</h3>
+                <form method="POST" action="{{ url_for('add_movie_from_tmdb') }}">
+                    <input type="hidden" name="tmdb_id" value="{{ movie_search_result.id }}">
+                    
+                    <label for="final_title">Title:</label>
+                    <input type="text" id="final_title" name="title" value="{{ movie_search_result.title }}" required>
 
-            <h3>Manage Movies</h3>
+                    <label for="final_year">Year:</label>
+                    <input type="text" id="final_year" name="year" value="{{ movie_search_result.year }}" required>
+
+                    <label for="final_genre">Genre:</label>
+                    <input type="text" id="final_genre" name="genre" value="{{ movie_search_result.genre }}" placeholder="e.g., Action, Sci-Fi">
+                    
+                    <label for="final_poster">Poster URL:</label>
+                    <input type="text" id="final_poster" name="poster" value="{{ movie_search_result.poster }}" required>
+
+                    <label for="final_trailer_link">Trailer Link (YouTube/Vimeo URL):</label>
+                    <input type="text" id="final_trailer_link" name="trailer_link" value="{{ movie_search_result.trailer_link or '' }}">
+                    
+                    <label for="final_download_link">Download Link (Direct URL):</label>
+                    <input type="text" id="final_download_link" name="download_link" placeholder="Enter download link here">
+
+                    <button type="submit">Confirm Add Movie</button>
+                </form>
+            </div>
+            {% elif manual_add_form %}
+            <div class="admin-form" style="margin-top: 20px;">
+                <h3>Add Movie Manually</h3>
+                <form method="POST" action="{{ url_for('add_movie_manual_save') }}">
+                    <label for="manual_title">Title:</label>
+                    <input type="text" id="manual_title" name="title" required>
+
+                    <label for="manual_year">Year:</label>
+                    <input type="text" id="manual_year" name="year" required>
+
+                    <label for="manual_genre">Genre:</label>
+                    <input type="text" id="manual_genre" name="genre" placeholder="e.g., Action, Sci-Fi">
+                    
+                    <label for="manual_poster">Poster URL:</label>
+                    <input type="text" id="manual_poster" name="poster" value="https://via.placeholder.com/200x300?text=New+Movie">
+
+                    <label for="manual_trailer_link">Trailer Link (YouTube/Vimeo URL):</label>
+                    <input type="text" id="manual_trailer_link" name="trailer_link">
+                    
+                    <label for="manual_download_link">Download Link (Direct URL):</label>
+                    <input type="text" id="manual_download_link" name="download_link">
+
+                    <button type="submit">Save Manual Movie</button>
+                </form>
+            </div>
+            {% endif %}
+
+
+            <h3 style="margin-top: 40px;">Manage Movies</h3>
             <ul class="admin-movie-list">
                 {% for movie in movies %}
                 <li class="admin-movie-item">
                     <span>{{ movie.title }} ({{ movie.year }})</span>
                     <div class="actions">
-                        <a href="{{ url_for('edit_movie', movie_id=movie.id) }}">Edit</a>
-                        <form method="POST" action="{{ url_for('delete_movie', movie_id=movie.id) }}" style="display:inline;">
+                        <a href="{{ url_for('edit_movie', movie_id=movie._id|string) }}">Edit</a>
+                        <form method="POST" action="{{ url_for('delete_movie', movie_id=movie._id|string) }}" style="display:inline;">
                             <button type="submit">Delete</button>
                         </form>
                     </div>
@@ -292,7 +382,7 @@ EDIT_MOVIE_CONTENT = """
             <h2 class="section-title">Edit Movie: {{ movie.title }}</h2>
 
             <div class="admin-form">
-                <form method="POST" action="{{ url_for('update_movie', movie_id=movie.id) }}">
+                <form method="POST" action="{{ url_for('update_movie', movie_id=movie._id|string) }}">
                     <label for="title">Title:</label>
                     <input type="text" id="title" name="title" value="{{ movie.title }}" required>
 
@@ -300,12 +390,12 @@ EDIT_MOVIE_CONTENT = """
                     <input type="text" id="year" name="year" value="{{ movie.year }}" required>
 
                     <label for="genre">Genre:</label>
-                    <input type="text" id="genre" name="genre" value="{{ movie.genre }}">
+                    <input type="text" id="genre" name="genre" value="{{ movie.genre or '' }}" placeholder="e.g., Action, Sci-Fi">
 
                     <label for="poster">Poster URL:</label>
-                    <input type="text" id="poster" name="poster" value="{{ movie.poster }}">
+                    <input type="text" id="poster" name="poster" value="{{ movie.poster }}" required>
 
-                    <label for="trailer_link">Trailer Link (YouTube/Vimeo):</label>
+                    <label for="trailer_link">Trailer Link (YouTube/Vimeo URL):</label>
                     <input type="text" id="trailer_link" name="trailer_link" value="{{ movie.trailer_link or '' }}">
                     
                     <label for="download_link">Download Link (Direct URL):</label>
@@ -318,27 +408,122 @@ EDIT_MOVIE_CONTENT = """
         </section>
 """
 
+# --- Decorator for Admin Login Required ---
+def login_required(f):
+    def wrap(*args, **kwargs):
+        if 'logged_in' in session:
+            return f(*args, **kwargs)
+        else:
+            flash('You need to login first.', 'error')
+            return redirect(url_for('login_page'))
+    wrap.__name__ = f.__name__ # Important for Flask to register unique endpoints
+    return wrap
+
 # --- Routes ---
 
 @app.route('/')
 def home():
-    # In a real app, you'd fetch movies from MongoDB here
-    return render_template_string(BASE_HTML, title="CineHub - Home", content=render_template_string(HOME_CONTENT, movies=movies_data))
+    movies = list(movies_collection.find().sort("year", -1)) # Fetch all movies
+    return render_template_string(BASE_HTML, title="CineHub - Home", content=render_template_string(HOME_CONTENT, movies=movies))
+
+@app.route('/login', methods=['GET', 'POST'])
+def login_page():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session['logged_in'] = True
+            flash('Logged in successfully!', 'success')
+            return redirect(url_for('admin_dashboard'))
+        else:
+            flash('Invalid credentials. Please try again.', 'error')
+    return render_template_string(BASE_HTML, title="Admin Login", content=LOGIN_PAGE_CONTENT)
+
+@app.route('/logout')
+def logout():
+    session.pop('logged_in', None)
+    flash('You have been logged out.', 'success')
+    return redirect(url_for('home'))
 
 @app.route('/admin')
+@login_required
 def admin_dashboard():
-    # In a real app, you'd fetch movies from MongoDB here
-    return render_template_string(BASE_HTML, title="CineHub - Admin", content=render_template_string(ADMIN_DASHBOARD_CONTENT, movies=movies_data))
+    movies = list(movies_collection.find().sort("_id", -1)) # Fetch all movies
+    return render_template_string(BASE_HTML, title="CineHub - Admin", content=render_template_string(ADMIN_DASHBOARD_CONTENT, movies=movies))
 
 @app.route('/admin/add_movie', methods=['POST'])
+@login_required
 def add_movie():
-    global next_movie_id
-    # TODO: In a real app, you'd interact with TMDb here to get full movie details.
-    # Example: response = requests.get(f"https://api.themoviedb.org/3/search/movie?api_key=YOUR_TMD_API_KEY&query={request.form['title']}")
-    #          movie_details = response.json().get('results')[0] # and then parse it.
+    action = request.form.get('action')
+    movie_title_from_form = request.form['title']
 
+    if action == "search_add_tmdb":
+        tmdb_search_url = f"{TMDB_BASE_URL}/search/movie"
+        params = {
+            "api_key": TMDB_API_KEY,
+            "query": movie_title_from_form,
+            "language": "en-US" # You can change language here
+        }
+        
+        try:
+            tmdb_response = requests.get(tmdb_search_url, params=params)
+            tmdb_response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+            movie_details = tmdb_response.json().get('results')
+
+            if movie_details and len(movie_details) > 0:
+                first_result = movie_details[0]
+                
+                # Try to get genre names from TMDb
+                genre_names = []
+                genre_ids = first_result.get('genre_ids', [])
+                if genre_ids:
+                    # In a real app, you'd cache this or make a separate API call for genres
+                    # For simplicity, we'll just put IDs here, or leave as placeholder
+                    genre_names = [str(gid) for gid in genre_ids] # Just show IDs for now
+                
+                # Fetching trailer link (requires another API call)
+                trailer_link = ""
+                if first_result.get('id'):
+                    videos_url = f"{TMDB_BASE_URL}/movie/{first_result['id']}/videos"
+                    video_params = {"api_key": TMDB_API_KEY, "language": "en-US"}
+                    video_response = requests.get(videos_url, params=video_params)
+                    video_data = video_response.json().get('results', [])
+                    for video in video_data:
+                        if video.get('site') == 'YouTube' and video.get('type') == 'Trailer':
+                            trailer_link = f"https://www.youtube.com/watch?v={video['key']}"
+                            break
+                
+                movie_search_result = {
+                    "id": first_result.get('id'),
+                    "title": first_result.get('title', movie_title_from_form),
+                    "year": int(first_result.get('release_date', '0000').split('-')[0]),
+                    "genre": ", ".join(genre_names) if genre_names else "Unknown", # Use joined genre names
+                    "poster": f"{TMDB_IMAGE_BASE_URL}{first_result['poster_path']}" if first_result.get('poster_path') else 'https://via.placeholder.com/200x300?text=No+Poster',
+                    "trailer_link": trailer_link
+                }
+                
+                movies = list(movies_collection.find().sort("_id", -1)) # Reload movie list
+                return render_template_string(BASE_HTML, title="CineHub - Admin", 
+                                              content=render_template_string(ADMIN_DASHBOARD_CONTENT, movies=movies, movie_search_result=movie_search_result))
+            else:
+                flash(f'No movie found on TMDb for "{movie_title_from_form}". Try adding manually.', 'error')
+                return redirect(url_for('admin_dashboard', manual_add_form=True)) # Redirect with flag for manual form
+
+        except requests.exceptions.RequestException as e:
+            flash(f'Error connecting to TMDb API: {e}. Please try again manually.', 'error')
+            return redirect(url_for('admin_dashboard', manual_add_form=True))
+    
+    elif action == "add_manual":
+        # Redirect to show the manual add form
+        return redirect(url_for('admin_dashboard', manual_add_form=True))
+    
+    flash('Invalid action.', 'error')
+    return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin/add_movie_from_tmdb', methods=['POST'])
+@login_required
+def add_movie_from_tmdb():
     new_movie = {
-        "id": next_movie_id,
         "title": request.form['title'],
         "year": int(request.form['year']),
         "genre": request.form.get('genre', 'Unknown'),
@@ -346,41 +531,34 @@ def add_movie():
         "trailer_link": request.form.get('trailer_link', '#'),
         "download_link": request.form.get('download_link', '#')
     }
-    movies_data.append(new_movie)
-    next_movie_id += 1
-    # In a real app, you'd insert into MongoDB here: movies_collection.insert_one(new_movie)
+    movies_collection.insert_one(new_movie)
+    flash(f"Movie '{new_movie['title']}' added successfully!", 'success')
     return redirect(url_for('admin_dashboard'))
 
-@app.route('/admin/edit_movie/<int:movie_id>')
+@app.route('/admin/add_movie_manual_save', methods=['POST'])
+@login_required
+def add_movie_manual_save():
+    new_movie = {
+        "title": request.form['title'],
+        "year": int(request.form['year']),
+        "genre": request.form.get('genre', 'Unknown'),
+        "poster": request.form.get('poster', 'https://via.placeholder.com/200x300?text=New+Movie'),
+        "trailer_link": request.form.get('trailer_link', '#'),
+        "download_link": request.form.get('download_link', '#')
+    }
+    movies_collection.insert_one(new_movie)
+    flash(f"Movie '{new_movie['title']}' added manually successfully!", 'success')
+    return redirect(url_for('admin_dashboard'))
+
+
+@app.route('/admin/edit_movie/<movie_id>')
+@login_required
 def edit_movie(movie_id):
-    movie_to_edit = next((movie for movie in movies_data if movie['id'] == movie_id), None)
-    if movie_to_edit:
-        return render_template_string(BASE_HTML, title=f"Edit {movie_to_edit['title']}", content=render_template_string(EDIT_MOVIE_CONTENT, movie=movie_to_edit))
-    return redirect(url_for('admin_dashboard'))
-
-@app.route('/admin/update_movie/<int:movie_id>', methods=['POST'])
-def update_movie(movie_id):
-    movie_to_update = next((movie for movie in movies_data if movie['id'] == movie_id), None)
-    if movie_to_update:
-        movie_to_update.update({
-            "title": request.form['title'],
-            "year": int(request.form['year']),
-            "genre": request.form.get('genre', 'Unknown'),
-            "poster": request.form.get('poster', 'https://via.placeholder.com/200x300?text=New+Movie'),
-            "trailer_link": request.form.get('trailer_link', '#'),
-            "download_link": request.form.get('download_link', '#')
-        })
-        # In a real app, you'd update in MongoDB here: movies_collection.update_one({"id": movie_id}, {"$set": movie_to_update})
-    return redirect(url_for('admin_dashboard'))
-
-@app.route('/admin/delete_movie/<int:movie_id>', methods=['POST'])
-def delete_movie(movie_id):
-    global movies_data
-    movies_data = [movie for movie in movies_data if movie['id'] != movie_id]
-    # In a real app, you'd delete from MongoDB here: movies_collection.delete_one({"id": movie_id})
-    return redirect(url_for('admin_dashboard'))
-
-
-# --- Run the app ---
-if __name__ == '__main__':
-    app.run(debug=True)
+    try:
+        movie_to_edit = movies_collection.find_one({"_id": ObjectId(movie_id)})
+        if movie_to_edit:
+            return render_template_string(BASE_HTML, title=f"Edit {movie_to_edit['title']}", content=render_template_string(EDIT_MOVIE_CONTENT, movie=movie_to_edit))
+        else:
+            flash('Movie not found!', 'error')
+    except Exception as e:
+        flash(f'Invalid Movie
