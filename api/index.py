@@ -11,25 +11,38 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "your_super_secret_key") # Change this in production!
 
 # --- TODO 1: MongoDB Connection Configuration ---
-# You need to get your MongoDB Atlas Connection String and replace the placeholder.
-# For local testing, you can use "mongodb://localhost:27017/"
-# On Vercel, set MONGODB_URI as an Environment Variable.
 MONGO_URI = os.environ.get("MONGODB_URI", "mongodb+srv://Demo270:Demo270@cluster0.ls1igsg.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0") 
 client = MongoClient(MONGO_URI)
-db = client.cinehub_db # Your database name (e.g., cinehub_db)
-movies_collection = db.movies # Your collection name (e.g., movies)
+db = client.cinehub_db 
+movies_collection = db.movies
 
 # --- TODO 2: TMDb API Configuration ---
-# Get your TMDb API Key (v3) and replace the placeholder.
-# On Vercel, set TMDB_API_KEY as an Environment Variable.
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "7dc544d9253bccc3cfecc1c677f69819") 
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
-TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500" # Base URL for TMDb movie posters
+TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 
 # --- TODO 3: Admin Credentials (For basic login, change in production!) ---
-# In a real app, store hashed passwords in a database.
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password") # Hashed password recommended for production
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password")
+
+# --- Helper Function to get TMDb Genres ---
+# সমাধান ২: TMDb থেকে Genre ID এবং নাম নিয়ে আসার জন্য ফাংশন
+def get_tmdb_genres():
+    """Fetches genre list from TMDb and returns a mapping of genre_id -> genre_name."""
+    genre_url = f"{TMDB_BASE_URL}/genre/movie/list"
+    params = {"api_key": TMDB_API_KEY, "language": "en-US"}
+    try:
+        response = requests.get(genre_url, params=params)
+        response.raise_for_status()
+        genres = response.json().get('genres', [])
+        # Create a dictionary like {28: "Action", 12: "Adventure"}
+        return {genre['id']: genre['name'] for genre in genres}
+    except requests.exceptions.RequestException:
+        return {}
+
+# অ্যাপ চালু হওয়ার সময় Genre লিস্ট নিয়ে নেওয়া হচ্ছে
+TMDB_GENRES = get_tmdb_genres()
+
 
 # --- HTML Templates (In a real app, these would be separate .html files) ---
 # For demonstration, everything is inlined as strings.
@@ -67,7 +80,7 @@ BASE_HTML = """
         .hero-content { position: relative; z-index: 1; max-width: 800px; padding: 20px; }
         .hero-title { font-size: 3.5em; margin-bottom: 15px; font-weight: 700; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }
         .hero-description { font-size: 1.2em; margin-bottom: 30px; line-height: 1.5; }
-        .btn { background-color: #e94560; color: #fff; padding: 12px 25px; border-radius: 5px; font-weight: 600; transition: background-color 0.3s ease; }
+        .btn { display: inline-block; background-color: #e94560; color: #fff; padding: 12px 25px; border-radius: 5px; font-weight: 600; transition: background-color 0.3s ease; }
         .btn:hover { background-color: #c03952; text-decoration: none; }
 
         /* Section Titles */
@@ -240,7 +253,6 @@ BASE_HTML = """
             if (hamburger && navMenu) {
                 hamburger.addEventListener('click', function() {
                     navMenu.classList.toggle('active');
-                    hamburger.classList.toggle('open');
                 });
             }
         });
@@ -279,7 +291,7 @@ LOGIN_PAGE_CONTENT = """
     <section class="admin-section container">
         <h2 class="section-title">Admin Login</h2>
         <div class="admin-form" style="max-width: 400px; margin: 0 auto;">
-            <form method="POST" action="{{ url_for('login') }}">
+            <form method="POST" action="{{ url_for('login_page') }}">
                 <label for="username">Username:</label>
                 <input type="text" id="username" name="username" required>
                 <label for="password">Password:</label>
@@ -367,7 +379,7 @@ ADMIN_DASHBOARD_CONTENT = """
                     <span>{{ movie.title }} ({{ movie.year }})</span>
                     <div class="actions">
                         <a href="{{ url_for('edit_movie', movie_id=movie._id|string) }}">Edit</a>
-                        <form method="POST" action="{{ url_for('delete_movie', movie_id=movie._id|string) }}" style="display:inline;">
+                        <form method="POST" action="{{ url_for('delete_movie', movie_id=movie._id|string) }}" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete this movie?');">
                             <button type="submit">Delete</button>
                         </form>
                     </div>
@@ -402,7 +414,7 @@ EDIT_MOVIE_CONTENT = """
                     <input type="text" id="download_link" name="download_link" value="{{ movie.download_link or '' }}">
 
                     <button type="submit">Update Movie</button>
-                    <a href="{{ url_for('admin_dashboard') }}" class="btn" style="margin-left: 10px;">Cancel</a>
+                    <a href="{{ url_for('admin_dashboard') }}" class="btn" style="margin-left: 10px; background-color: #555;">Cancel</a>
                 </form>
             </div>
         </section>
@@ -428,6 +440,9 @@ def home():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login_page():
+    if 'logged_in' in session:
+        return redirect(url_for('admin_dashboard'))
+        
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -448,44 +463,47 @@ def logout():
 @app.route('/admin')
 @login_required
 def admin_dashboard():
-    movies = list(movies_collection.find().sort("_id", -1)) # Fetch all movies
-    return render_template_string(BASE_HTML, title="CineHub - Admin", content=render_template_string(ADMIN_DASHBOARD_CONTENT, movies=movies))
+    # সমাধান ১: URL থেকে 'manual_add_form' প্যারামিটারটি গ্রহণ করা হচ্ছে
+    show_manual_form = request.args.get('manual_add_form', False)
+    movies = list(movies_collection.find().sort("_id", -1))
+    # সমাধান ১: টেমপ্লেটে 'manual_add_form' ভ্যারিয়েবলটি পাস করা হচ্ছে
+    return render_template_string(BASE_HTML, title="CineHub - Admin", content=render_template_string(ADMIN_DASHBOARD_CONTENT, movies=movies, manual_add_form=show_manual_form))
 
 @app.route('/admin/add_movie', methods=['POST'])
 @login_required
 def add_movie():
     action = request.form.get('action')
-    movie_title_from_form = request.form['title']
+    movie_title_from_form = request.form.get('title')
+
+    if not movie_title_from_form:
+        flash('Movie title is required.', 'error')
+        return redirect(url_for('admin_dashboard'))
+
+    if action == "add_manual":
+        # ম্যানুয়াল ফর্ম দেখানোর জন্য রিডাইরেক্ট করা হচ্ছে
+        return redirect(url_for('admin_dashboard', manual_add_form=True))
 
     if action == "search_add_tmdb":
         tmdb_search_url = f"{TMDB_BASE_URL}/search/movie"
-        params = {
-            "api_key": TMDB_API_KEY,
-            "query": movie_title_from_form,
-            "language": "en-US" # You can change language here
-        }
+        params = {"api_key": TMDB_API_KEY, "query": movie_title_from_form}
         
         try:
             tmdb_response = requests.get(tmdb_search_url, params=params)
-            tmdb_response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-            movie_details = tmdb_response.json().get('results')
+            tmdb_response.raise_for_status()
+            search_results = tmdb_response.json().get('results')
 
-            if movie_details and len(movie_details) > 0:
-                first_result = movie_details[0]
+            if search_results:
+                first_result = search_results[0]
                 
-                # Try to get genre names from TMDb
-                genre_names = []
+                # সমাধান ২: Genre ID-এর বদলে Genre নাম ব্যবহার করা হচ্ছে
                 genre_ids = first_result.get('genre_ids', [])
-                if genre_ids:
-                    # In a real app, you'd cache this or make a separate API call for genres
-                    # For simplicity, we'll just put IDs here, or leave as placeholder
-                    genre_names = [str(gid) for gid in genre_ids] # Just show IDs for now
+                genre_names = [TMDB_GENRES.get(gid, "Unknown") for gid in genre_ids]
                 
-                # Fetching trailer link (requires another API call)
                 trailer_link = ""
-                if first_result.get('id'):
-                    videos_url = f"{TMDB_BASE_URL}/movie/{first_result['id']}/videos"
-                    video_params = {"api_key": TMDB_API_KEY, "language": "en-US"}
+                movie_id = first_result.get('id')
+                if movie_id:
+                    videos_url = f"{TMDB_BASE_URL}/movie/{movie_id}/videos"
+                    video_params = {"api_key": TMDB_API_KEY}
                     video_response = requests.get(videos_url, params=video_params)
                     video_data = video_response.json().get('results', [])
                     for video in video_data:
@@ -493,29 +511,34 @@ def add_movie():
                             trailer_link = f"https://www.youtube.com/watch?v={video['key']}"
                             break
                 
+                # সমাধান ৩: Year বের করার সময় এরর হ্যান্ডলিং
+                year = 0
+                release_date = first_result.get('release_date', '')
+                if release_date:
+                    try:
+                        year = int(release_date.split('-')[0])
+                    except (ValueError, IndexError):
+                        year = 0 # ভুল ফরম্যাট থাকলে ডিফল্ট 0
+
                 movie_search_result = {
-                    "id": first_result.get('id'),
+                    "id": movie_id,
                     "title": first_result.get('title', movie_title_from_form),
-                    "year": int(first_result.get('release_date', '0000').split('-')[0]),
-                    "genre": ", ".join(genre_names) if genre_names else "Unknown", # Use joined genre names
+                    "year": year,
+                    "genre": ", ".join(genre_names) if genre_names else "N/A",
                     "poster": f"{TMDB_IMAGE_BASE_URL}{first_result['poster_path']}" if first_result.get('poster_path') else 'https://via.placeholder.com/200x300?text=No+Poster',
                     "trailer_link": trailer_link
                 }
                 
-                movies = list(movies_collection.find().sort("_id", -1)) # Reload movie list
+                movies = list(movies_collection.find().sort("_id", -1))
                 return render_template_string(BASE_HTML, title="CineHub - Admin", 
                                               content=render_template_string(ADMIN_DASHBOARD_CONTENT, movies=movies, movie_search_result=movie_search_result))
             else:
                 flash(f'No movie found on TMDb for "{movie_title_from_form}". Try adding manually.', 'error')
-                return redirect(url_for('admin_dashboard', manual_add_form=True)) # Redirect with flag for manual form
+                return redirect(url_for('admin_dashboard', manual_add_form=True))
 
         except requests.exceptions.RequestException as e:
             flash(f'Error connecting to TMDb API: {e}. Please try again manually.', 'error')
             return redirect(url_for('admin_dashboard', manual_add_form=True))
-    
-    elif action == "add_manual":
-        # Redirect to show the manual add form
-        return redirect(url_for('admin_dashboard', manual_add_form=True))
     
     flash('Invalid action.', 'error')
     return redirect(url_for('admin_dashboard'))
@@ -523,31 +546,37 @@ def add_movie():
 @app.route('/admin/add_movie_from_tmdb', methods=['POST'])
 @login_required
 def add_movie_from_tmdb():
-    new_movie = {
-        "title": request.form['title'],
-        "year": int(request.form['year']),
-        "genre": request.form.get('genre', 'Unknown'),
-        "poster": request.form.get('poster', 'https://via.placeholder.com/200x300?text=New+Movie'),
-        "trailer_link": request.form.get('trailer_link', '#'),
-        "download_link": request.form.get('download_link', '#')
-    }
-    movies_collection.insert_one(new_movie)
-    flash(f"Movie '{new_movie['title']}' added successfully!", 'success')
+    try:
+        new_movie = {
+            "title": request.form['title'],
+            "year": int(request.form['year']),
+            "genre": request.form.get('genre', 'N/A'),
+            "poster": request.form.get('poster', 'https://via.placeholder.com/200x300?text=New+Movie'),
+            "trailer_link": request.form.get('trailer_link', ''),
+            "download_link": request.form.get('download_link', '')
+        }
+        movies_collection.insert_one(new_movie)
+        flash(f"Movie '{new_movie['title']}' added successfully!", 'success')
+    except Exception as e:
+        flash(f'Error adding movie: {e}', 'error')
     return redirect(url_for('admin_dashboard'))
 
 @app.route('/admin/add_movie_manual_save', methods=['POST'])
 @login_required
 def add_movie_manual_save():
-    new_movie = {
-        "title": request.form['title'],
-        "year": int(request.form['year']),
-        "genre": request.form.get('genre', 'Unknown'),
-        "poster": request.form.get('poster', 'https://via.placeholder.com/200x300?text=New+Movie'),
-        "trailer_link": request.form.get('trailer_link', '#'),
-        "download_link": request.form.get('download_link', '#')
-    }
-    movies_collection.insert_one(new_movie)
-    flash(f"Movie '{new_movie['title']}' added manually successfully!", 'success')
+    try:
+        new_movie = {
+            "title": request.form['title'],
+            "year": int(request.form['year']),
+            "genre": request.form.get('genre', 'N/A'),
+            "poster": request.form.get('poster', 'https://via.placeholder.com/200x300?text=New+Movie'),
+            "trailer_link": request.form.get('trailer_link', ''),
+            "download_link": request.form.get('download_link', '')
+        }
+        movies_collection.insert_one(new_movie)
+        flash(f"Movie '{new_movie['title']}' added manually successfully!", 'success')
+    except Exception as e:
+        flash(f'Error adding movie: {e}', 'error')
     return redirect(url_for('admin_dashboard'))
 
 
@@ -571,10 +600,10 @@ def update_movie(movie_id):
         updated_data = {
             "title": request.form['title'],
             "year": int(request.form['year']),
-            "genre": request.form.get('genre', 'Unknown'),
-            "poster": request.form.get('poster', 'https://via.placeholder.com/200x300?text=New+Movie'),
-            "trailer_link": request.form.get('trailer_link', '#'),
-            "download_link": request.form.get('download_link', '#')
+            "genre": request.form.get('genre', 'N/A'),
+            "poster": request.form.get('poster'),
+            "trailer_link": request.form.get('trailer_link', ''),
+            "download_link": request.form.get('download_link', '')
         }
         movies_collection.update_one({"_id": ObjectId(movie_id)}, {"$set": updated_data})
         flash(f"Movie updated successfully!", 'success')
@@ -602,6 +631,6 @@ if __name__ == '__main__':
         movies_collection.insert_one(
             {"title": "The Last Sentinel", "year": 2023, "genre": "Sci-Fi", 
              "poster": "https://via.placeholder.com/200x300/0f3460/e0e0e0?text=Featured+Movie", 
-             "trailer_link": "#", "download_link": "#"}
+             "trailer_link": "", "download_link": ""}
         )
     app.run(debug=True)
