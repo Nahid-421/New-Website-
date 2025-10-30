@@ -561,4 +561,47 @@ def edit_movie(movie_id):
         else:
             flash('Movie not found!', 'error')
     except Exception as e:
-        flash(f'Invalid Movie
+        flash(f'Invalid Movie ID: {e}', 'error')
+    return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin/update_movie/<movie_id>', methods=['POST'])
+@login_required
+def update_movie(movie_id):
+    try:
+        updated_data = {
+            "title": request.form['title'],
+            "year": int(request.form['year']),
+            "genre": request.form.get('genre', 'Unknown'),
+            "poster": request.form.get('poster', 'https://via.placeholder.com/200x300?text=New+Movie'),
+            "trailer_link": request.form.get('trailer_link', '#'),
+            "download_link": request.form.get('download_link', '#')
+        }
+        movies_collection.update_one({"_id": ObjectId(movie_id)}, {"$set": updated_data})
+        flash(f"Movie updated successfully!", 'success')
+    except Exception as e:
+        flash(f'Error updating movie: {e}', 'error')
+    return redirect(url_for('admin_dashboard'))
+
+@app.route('/admin/delete_movie/<movie_id>', methods=['POST'])
+@login_required
+def delete_movie(movie_id):
+    try:
+        result = movies_collection.delete_one({"_id": ObjectId(movie_id)})
+        if result.deleted_count > 0:
+            flash(f"Movie deleted successfully!", 'success')
+        else:
+            flash(f"Movie not found!", 'error')
+    except Exception as e:
+        flash(f'Error deleting movie: {e}', 'error')
+    return redirect(url_for('admin_dashboard'))
+
+# --- Run the app ---
+if __name__ == '__main__':
+    # Ensure a basic movie exists if database is empty for initial display
+    if movies_collection.count_documents({}) == 0:
+        movies_collection.insert_one(
+            {"title": "The Last Sentinel", "year": 2023, "genre": "Sci-Fi", 
+             "poster": "https://via.placeholder.com/200x300/0f3460/e0e0e0?text=Featured+Movie", 
+             "trailer_link": "#", "download_link": "#"}
+        )
+    app.run(debug=True)
