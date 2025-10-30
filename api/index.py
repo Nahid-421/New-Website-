@@ -1,12 +1,14 @@
-# app.py - FINAL, APP-LIKE VERSION
-from flask import Flask, render_template_string, request, redirect, url_for, session, flash, abort
+# app.py - FINAL & POLISHED VERSION
+from flask import Flask, render_template_string, request, redirect, url_for, session, flash, abort, Response
 from pymongo import MongoClient
 from bson.objectid import ObjectId
+from bson.errors import InvalidId
 import requests
 import os
+import base64
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "your_super_secret_key_12345")
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a_very_strong_and_unique_secret_key")
 
 # --- MongoDB Configuration ---
 MONGO_URI = os.environ.get("MONGODB_URI", "mongodb+srv://Demo270:Demo270@cluster0.ls1igsg.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
@@ -25,7 +27,8 @@ ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password")
 
 # --- HTML Templates ---
-
+# (আগের সংস্করণ থেকে HTML কোড অপরিবর্তিত আছে, তাই এখানে পুনরাবৃত্তি করা হলো না)
+# (Your existing BASE_HTML, HOME_CONTENT, MOVIE_DETAILS_CONTENT, LOGIN_PAGE_CONTENT, ADMIN_DASHBOARD_CONTENT, EDIT_MOVIE_CONTENT variables go here)
 BASE_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -134,7 +137,6 @@ BASE_HTML = """
 </body>
 </html>
 """
-
 HOME_CONTENT = """
 {% set hero_movie = movies[0] if movies else None %}
 <section class="hero" style="background-image: url('{{ hero_movie.backdrop if hero_movie and hero_movie.backdrop else 'https://via.placeholder.com/1200x600/0f3460/e0e0e0?text=CineHub' }}');">
@@ -168,8 +170,6 @@ HOME_CONTENT = """
     </div>
 </section>
 """
-
-# উন্নতি: নতুন মুভি ডিটেইলস পেজের টেমপ্লেট
 MOVIE_DETAILS_CONTENT = """
 <div class="movie-detail-header" style="background-image: url('{{ movie.backdrop }}')"></div>
 <div class="container">
@@ -193,7 +193,6 @@ MOVIE_DETAILS_CONTENT = """
     </div>
 </div>
 """
-
 LOGIN_PAGE_CONTENT = """
 <div class="container admin-section">
     <div style="max-width: 400px; margin: 40px auto;">
@@ -210,8 +209,6 @@ LOGIN_PAGE_CONTENT = """
     </div>
 </div>
 """
-
-# সমাধান: অ্যাডমিন ড্যাশবোর্ডের সম্পূর্ণ টেমপ্লেট যোগ করা হয়েছে
 ADMIN_DASHBOARD_CONTENT = """
 <section class="admin-section container">
     <h2 class="section-title">Admin Dashboard</h2>
@@ -254,8 +251,6 @@ ADMIN_DASHBOARD_CONTENT = """
     </div>
 </section>
 """
-
-# সমাধান: এডিট পেজের সম্পূর্ণ টেমপ্লেট যোগ করা হয়েছে
 EDIT_MOVIE_CONTENT = """
 <section class="admin-section container">
     <h2 class="section-title">Edit Movie: {{ movie.title }}</h2>
@@ -276,7 +271,7 @@ EDIT_MOVIE_CONTENT = """
 </section>
 """
 
-# --- Decorator & Routes ---
+# --- Decorator, Routes & App Logic ---
 
 def login_required(f):
     def wrap(*args, **kwargs):
@@ -287,12 +282,20 @@ def login_required(f):
     wrap.__name__ = f.__name__
     return wrap
 
+# চূড়ান্ত সমাধান: Favicon 404 এরর দূর করার জন্য এই রুটটি যোগ করা হয়েছে
+@app.route('/favicon.ico')
+@app.route('/favicon.png')
+def favicon():
+    # একটি 1x1 পিক্সেলের স্বচ্ছ PNG ইমেজ পাঠানো হচ্ছে
+    favicon_b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+    favicon_bytes = base64.b64decode(favicon_b64)
+    return Response(favicon_bytes, mimetype='image/png')
+
 @app.route('/')
 def home():
     movies = list(movies_collection.find().sort("_id", -1))
     return render_template_string(BASE_HTML, title="Home", content=render_template_string(HOME_CONTENT, movies=movies))
 
-# উন্নতি: নতুন মুভি ডিটেইলস পেজের জন্য রুট
 @app.route('/movie/<movie_id>')
 def movie_details(movie_id):
     try:
@@ -300,7 +303,7 @@ def movie_details(movie_id):
         if movie:
             return render_template_string(BASE_HTML, title=movie['title'], content=render_template_string(MOVIE_DETAILS_CONTENT, movie=movie))
         abort(404)
-    except:
+    except InvalidId:
         abort(404)
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -343,9 +346,10 @@ def add_movie():
         movie_id = results[0]['id']
         details_url = f"{TMDB_BASE_URL}/movie/{movie_id}"
         details_resp = requests.get(details_url, params={"api_key": TMDB_API_KEY, "append_to_response": "videos"})
+        details_resp.raise_for_status()
         details = details_resp.json()
         
-        trailer = next((v['key'] for v in details.get('videos', {}).get('results', []) if v['site'] == 'YouTube' and v['type'] == 'Trailer'), None)
+        trailer_key = next((v['key'] for v in details.get('videos', {}).get('results', []) if v['site'] == 'YouTube' and v['type'] == 'Trailer'), None)
         
         new_movie = {
             "title": details.get('title'),
@@ -354,7 +358,8 @@ def add_movie():
             "overview": details.get('overview'),
             "poster": f"{TMDB_IMAGE_BASE_URL}{details['poster_path']}" if details.get('poster_path') else '',
             "backdrop": f"{TMDB_BACKDROP_BASE_URL}{details['backdrop_path']}" if details.get('backdrop_path') else '',
-            "trailer_link": f"https://www.youtube.com/watch?v={trailer}" if trailer else '',
+            "trailer_link": f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else '',
+            "download_link": "" # Admin can add this later
         }
         movies_collection.insert_one(new_movie)
         flash(f"Movie '{new_movie['title']}' added successfully!", 'success')
@@ -366,7 +371,7 @@ def add_movie():
 @login_required
 def add_movie_manual_save():
     try:
-        new_movie = {key: request.form[key] for key in request.form}
+        new_movie = {key: request.form.get(key, '') for key in ['title', 'year', 'genre', 'poster', 'trailer_link', 'download_link', 'overview']}
         new_movie['year'] = int(new_movie['year'])
         movies_collection.insert_one(new_movie)
         flash(f"Movie '{new_movie['title']}' added manually!", 'success')
@@ -377,16 +382,19 @@ def add_movie_manual_save():
 @app.route('/admin/edit/<movie_id>')
 @login_required
 def edit_movie(movie_id):
-    movie = movies_collection.find_one({"_id": ObjectId(movie_id)})
-    if movie:
-        return render_template_string(BASE_HTML, title=f"Edit {movie['title']}", content=render_template_string(EDIT_MOVIE_CONTENT, movie=movie))
-    return redirect(url_for('admin_dashboard'))
+    try:
+        movie = movies_collection.find_one({"_id": ObjectId(movie_id)})
+        if movie:
+            return render_template_string(BASE_HTML, title=f"Edit {movie['title']}", content=render_template_string(EDIT_MOVIE_CONTENT, movie=movie))
+        abort(404)
+    except InvalidId:
+        abort(404)
 
 @app.route('/admin/update/<movie_id>', methods=['POST'])
 @login_required
 def update_movie(movie_id):
     try:
-        updated_data = {key: request.form[key] for key in request.form}
+        updated_data = {key: request.form.get(key, '') for key in ['title', 'year', 'genre', 'poster', 'backdrop', 'trailer_link', 'download_link', 'overview']}
         updated_data['year'] = int(updated_data['year'])
         movies_collection.update_one({"_id": ObjectId(movie_id)}, {"$set": updated_data})
         flash("Movie updated successfully!", 'success')
@@ -404,8 +412,24 @@ def delete_movie(movie_id):
         flash(f'Error deleting movie: {e}', 'error')
     return redirect(url_for('admin_dashboard'))
 
+
 if __name__ == '__main__':
+    # প্রথমবার চালানোর জন্য ডেটাবেস খালি থাকলে একটি ডিফল্ট মুভি যোগ করা হচ্ছে
     if movies_collection.count_documents({}) == 0:
-        # Adding a default movie for first time run
-        add_movie_from_tmdb_title("Avatar")
+        try:
+            # TMDb থেকে একটি জনপ্রিয় মুভি যোগ করার চেষ্টা করা হচ্ছে
+            search_url = f"{TMDB_BASE_URL}/search/movie"
+            response = requests.get(search_url, params={"api_key": TMDB_API_KEY, "query": "Avatar"})
+            movie_id = response.json()['results'][0]['id']
+            # ... (এখানে মুভি যোগ করার সম্পূর্ণ লজিকটি আবার লেখা যেতে পারে)
+            # তবে সহজ করার জন্য একটি হার্ডকোডেড মুভি যোগ করা হলো
+            movies_collection.insert_one({
+                "title": "Avatar", "year": 2009, "genre": "Action, Adventure, Fantasy, Science Fiction",
+                "overview": "In the 22nd century, a paraplegic Marine is dispatched to the moon Pandora on a unique mission, but becomes torn between following orders and protecting the world he feels is his home.",
+                "poster": "https://image.tmdb.org/t/p/w500/jRXYjXNq0Cs2TcJjLkki24MLp7u.jpg",
+                "backdrop": "https://image.tmdb.org/t/p/original/vL5LR6WdxIhTTIua1QcYLBdeVY2.jpg",
+                "trailer_link": "https://www.youtube.com/watch?v=5PSNL1qE6VY", "download_link": ""
+            })
+        except Exception:
+            pass # API কাজ না করলে খালি ডেটাবেস নিয়েই শুরু হবে
     app.run(debug=True)
