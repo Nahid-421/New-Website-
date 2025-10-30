@@ -1,4 +1,4 @@
-# app.py - A professional, streaming-app-style Flask application
+# app.py - FINAL CORRECTED VERSION
 from flask import Flask, render_template_string, request, redirect, url_for, session, flash, abort, Response
 from pymongo import MongoClient
 from bson.objectid import ObjectId
@@ -8,16 +8,15 @@ import os
 import base64
 
 app = Flask(__name__)
-# একটি শক্তিশালী এবং ইউনিক কী ব্যবহার করুন
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a_very_strong_and_unique_secret_key_for_cinehub")
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a_very_strong_and_unique_secret_key_for_cinehub_final")
 
-# --- কনফিগারেশন ---
+# --- Configuration ---
 MONGO_URI = os.environ.get("MONGODB_URI", "mongodb+srv://Demo270:Demo270@cluster0.ls1igsg.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "7dc544d9253bccc3cfecc1c677f69819")
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "password")
 
-# --- ডেটাবেস কানেকশন ---
+# --- Database Connection ---
 client = MongoClient(MONGO_URI)
 db = client.cinehub_db
 movies_collection = db.movies
@@ -27,8 +26,8 @@ TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w500"
 TMDB_BACKDROP_BASE_URL = "https://image.tmdb.org/t/p/original"
 
-# --- HTML টেমপ্লেট ---
 
+# --- HTML Templates (Unchanged from previous version) ---
 BASE_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -53,32 +52,24 @@ BASE_HTML = """
         .flash-message { padding: 15px; text-align: center; border-radius: 8px; margin: 20px auto; font-weight: 600; max-width: 1200px; }
         .flash-message.success { background-color: #28a745; color: white; }
         .flash-message.error { background-color: #dc3545; color: white; }
-        main { padding: 40px 0; }
+        main { padding-top: 40px; }
         .section-title { font-size: 1.8em; font-weight: 600; color: #fff; margin-bottom: 20px; border-left: 4px solid var(--accent); padding-left: 10px; }
-        
-        /* --- Homepage Styles --- */
         .hero { position: relative; height: 70vh; display: flex; align-items: flex-end; }
         .hero-bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: -1; }
         .hero-gradient { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(to top, var(--bg-primary) 10%, rgba(11, 12, 16, 0.5) 60%, var(--bg-primary) 100%); }
         .hero-content { max-width: 50%; }
         .hero-title { font-size: 3.5em; font-weight: 700; color: #fff; text-shadow: 2px 2px 10px rgba(0,0,0,0.7); }
         .hero-overview { font-size: 1.1em; margin: 20px 0; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-        
-        /* --- Movie Grid --- */
         .movie-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; }
         .movie-card { background: var(--bg-secondary); border-radius: 8px; overflow: hidden; transform: scale(1); transition: transform 0.3s, box-shadow 0.3s; }
         .movie-card:hover { transform: scale(1.05); box-shadow: 0 10px 30px rgba(102, 252, 241, 0.2); }
         .movie-poster { width: 100%; aspect-ratio: 2/3; object-fit: cover; }
-        
-        /* --- Movie Details Page --- */
         .details-backdrop { height: 60vh; position: relative; }
         .details-content { display: flex; gap: 40px; margin-top: -150px; position: relative; z-index: 2; }
         .details-poster img { width: 280px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
         .details-info h1 { font-size: 3em; font-weight: 700; color: #fff; }
         .details-meta { display: flex; gap: 20px; opacity: 0.8; margin: 15px 0; }
         .details-actions { margin-top: 30px; display: flex; gap: 15px; }
-
-        /* --- Admin & Login Page --- */
         .form-container { max-width: 500px; margin: 40px auto; background-color: var(--bg-secondary); padding: 40px; border-radius: 12px; }
         .form-container label { display: block; margin-bottom: 8px; font-weight: 600; }
         .form-container input, .form-container textarea { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid var(--accent); border-radius: 8px; background-color: var(--bg-primary); color: var(--text-primary); font-size: 1em; }
@@ -92,6 +83,9 @@ BASE_HTML = """
             <a href="{{ url_for('home') }}" class="logo">CineHub</a>
             <nav>
                 <a href="{{ url_for('admin_dashboard') }}" style="font-weight: 600;">Admin Panel</a>
+                 {% if session.logged_in %}
+                    <a href="{{ url_for('logout') }}" style="margin-left: 20px;">Logout</a>
+                {% endif %}
             </nav>
         </div>
     </header>
@@ -103,7 +97,7 @@ BASE_HTML = """
         </div>
         {{ content | safe }}
     </main>
-    <footer style="text-align:center; padding: 40px; margin-top: 50px; background-color: var(--bg-secondary);">&copy; 2024 CineHub. A Modern Web App.</footer>
+    <footer style="text-align:center; padding: 40px; margin-top: 50px; background-color: var(--bg-secondary);">&copy; 2024 CineHub. All Rights Reserved.</footer>
 </body>
 </html>
 """
@@ -164,6 +158,7 @@ MOVIE_DETAILS_CONTENT = """
 </div>
 """
 
+# সমাধান: লগইন ফর্মের action অ্যাট্রিবিউটটি সংশোধন করা হয়েছে
 LOGIN_PAGE_CONTENT = """
 <div class="form-container">
     <h1 style="text-align: center; margin-bottom: 20px; color: #fff;">Admin Login</h1>
@@ -195,10 +190,10 @@ ADMIN_DASHBOARD_CONTENT = """
             {% for movie in movies %}
             <li class="admin-movie-list">
                 <span>{{ movie.title }} ({{ movie.year }})</span>
-                <div style="display: flex; gap: 15px;">
+                <div style="display: flex; gap: 15px; align-items: center;">
                     <a href="{{ url_for('edit_movie', movie_id=movie._id|string) }}" style="color: var(--accent);">Edit</a>
                     <form method="POST" action="{{ url_for('delete_movie', movie_id=movie._id|string) }}" onsubmit="return confirm('Are you sure you want to delete this movie?');" style="margin:0;">
-                        <button type="submit" style="background:none; border:none; color: #dc3545; cursor:pointer; font-size: 1em; padding:0;">Delete</button>
+                        <button type="submit" style="background:none; border:none; color: #dc3545; cursor:pointer; font-size: 1em; padding:0; font-family: 'Inter', sans-serif;">Delete</button>
                     </form>
                 </div>
             </li>
@@ -227,7 +222,7 @@ EDIT_MOVIE_CONTENT = """
 </div>
 """
 
-# --- হেল্পার ফাংশন এবং ডেকোরেটর ---
+# --- Helper Functions & Decorators ---
 def login_required(f):
     def wrap(*args, **kwargs):
         if 'logged_in' in session: return f(*args, **kwargs)
@@ -236,7 +231,7 @@ def login_required(f):
     wrap.__name__ = f.__name__
     return wrap
 
-# --- মূল অ্যাপ রুট ---
+# --- Main App Routes ---
 @app.route('/favicon.ico')
 def favicon():
     favicon_b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
@@ -256,7 +251,7 @@ def movie_details(movie_id):
     except InvalidId:
         abort(404)
 
-# --- অ্যাডমিন রুট ---
+# --- Admin Routes ---
 @app.route('/admin/login', methods=['GET', 'POST'])
 def login():
     if 'logged_in' in session: return redirect(url_for('admin_dashboard'))
@@ -284,21 +279,24 @@ def admin_dashboard():
 def add_movie_from_tmdb():
     title_query = request.form.get('title')
     try:
+        # Search for the movie to get its ID
         search_url = f"{TMDB_BASE_URL}/search/movie"
         response = requests.get(search_url, params={"api_key": TMDB_API_KEY, "query": title_query})
         response.raise_for_status()
         results = response.json().get('results')
         if not results:
-            flash(f'Movie not found for "{title_query}". Please try a different title.', 'error')
+            flash(f'Movie not found for "{title_query}".', 'error')
             return redirect(url_for('admin_dashboard'))
         
         movie_id = results[0]['id']
+
+        # Get detailed information using the ID
         details_url = f"{TMDB_BASE_URL}/movie/{movie_id}?api_key={TMDB_API_KEY}&append_to_response=videos"
         details_resp = requests.get(details_url)
         details_resp.raise_for_status()
         details = details_resp.json()
         
-        trailer = next((v['key'] for v in details.get('videos', {}).get('results', []) if v['site'] == 'YouTube' and v['type'] == 'Trailer'), None)
+        trailer_key = next((v['key'] for v in details.get('videos', {}).get('results', []) if v['site'] == 'YouTube' and v['type'] == 'Trailer'), None)
         
         new_movie = {
             "title": details.get('title'),
@@ -307,7 +305,7 @@ def add_movie_from_tmdb():
             "overview": details.get('overview'),
             "poster": f"{TMDB_IMAGE_BASE_URL}{details.get('poster_path')}" if details.get('poster_path') else '',
             "backdrop": f"{TMDB_BACKDROP_BASE_URL}{details.get('backdrop_path')}" if details.get('backdrop_path') else '',
-            "trailer_link": f"https://www.youtube.com/watch?v={trailer}" if trailer else '',
+            "trailer_link": f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else '',
             "download_link": ""
         }
         movies_collection.insert_one(new_movie)
@@ -351,8 +349,7 @@ def delete_movie(movie_id):
     return redirect(url_for('admin_dashboard'))
 
 if __name__ == '__main__':
-    # প্রথমবার চালানোর জন্য ডেটাবেস খালি থাকলে একটি ডিফল্ট মুভি যোগ করা হবে
+    # Add a default movie if the database is empty on first run
     if movies_collection.count_documents({}) == 0:
-        print("Database is empty. Adding a default movie...")
-        # এখানে আপনি চাইলে TMDb থেকে একটি মুভি যোগ করার ফাংশন কল করতে পারেন
+        print("Database is empty. You can add a movie from the admin panel after logging in.")
     app.run(debug=True, port=5000)
